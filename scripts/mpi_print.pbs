@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#PBS -l nodes=1:ppn=128
+#PBS -l walltime=00:30:00
+#PBS -A astaff
+#PBS -e ${PBS_JOBNAME}.${PBS_JOBID}.stderr
+#PBS -o ${PBS_JOBNAME}.${PBS_JOBID}.stdout
+
+# unset SLURM_EXPORT_ENV
+echo "JOB ID = $SLURM_JOB_ID"
+
+
+cd $PBS_O_WORKDIR
+
+module --force purge
+module load cluster/dodrio/cpu_rome
+module load dask
+module load vsc-mympirun
+
+worker_nodes=$(uniq $PBS_NODEFILE)
+echo "worker_nodes = ${worker_nodes}"
+
+mympirun --universe 128 python mpi_print.py
