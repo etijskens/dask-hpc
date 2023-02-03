@@ -1,3 +1,8 @@
+*.output.txt
+*.output.txt.stats
+*.stderr
+*.stdout
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
