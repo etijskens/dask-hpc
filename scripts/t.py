@@ -38,7 +38,7 @@ with open(filename, mode='a') as f:
     print('rank starting client script', file=f)
 
 
-def costly_simulation(series: pd.Series, column_name: str, sleep: float):
+def costly_simulation(series: pd.Series, column_name: str, sleep: float) -> float:
     """Compute the sum of the dataframe column <series>.
     
     :param series: a dataframe column (numeric)
@@ -47,25 +47,23 @@ def costly_simulation(series: pd.Series, column_name: str, sleep: float):
         we used random.random() for that, but we cannot set the seed of the random generator in the workers. 
         Hence, we pass the value from the client script. 
     """
-    time.sleep(sleep)
-    with open(filename, mode='a') as f:
+    from mpi_print import print
+    et_stopwatch.print = print
+    
+    with Stopwatch(f"costly_simulation(column_data, {column_name=}, {sleep=}) took:", file=filename):
+        time.sleep(sleep)
         result = sum(series)
-        print( f"  sleep({sleep} s)\n"
-             , f"  sum of column '{column_name}' = ({result:8.3f})"
-             , file=f
-             )
+        with open(filename, mode='a') as f:
+            print(f"sum of '{column_name}' = ({result:8.3f})", file=f)
 
     return result
 
 
-if __name__ == "__main__":
-    # This code runs only on the client rank (1)
-    # (Rank 0 runs the scheduler and all other ranks are workers)
-    
-    ### Create a DataFrame ###  
-    # Create a numpy n_rows x n_columns matrix of random numbers. 
-    n_columns = 10
-    n_rows = 50
+def create_dataframe(*, n_rows: int, n_columns:int) -> pd.DataFrame:
+    """ Create a DataFrame with n_rows x n_columns, filled with random floats between 0 and 1. 
+    Columns are scaled such that their sum equals i+1, i being the column index (starting counting from 0).
+    """
+    # Create a numpy n_rows x n_columns matrix of random floats. 
     a = np.random.random(size=(n_rows, n_columns))
     # Scale the column such that the sum of the i-th column is i+1 (but it is named 'column_<i+1>)
     # The total sum is then 1+2+...+n_columns = n_columns*(n_columns+1)/2
@@ -79,7 +77,15 @@ if __name__ == "__main__":
     
     # create a dataframe from the matrix a: 
     column_names = [f"column_{c+1}" for c in range(n_columns)] # column_names
-    df = pd.DataFrame(a, columns=column_names)
+    
+    return pd.DataFrame(a, columns=column_names)
+
+
+if __name__ == "__main__":
+    # This code runs only on the client rank (1)
+    # (Rank 0 runs the scheduler and all other ranks are workers)
+    
+    df = create_dataframe(n_columns=10, n_rows=50) 
 
     ### Distribute the work ###  
     # We will compute the sum of all elements in the dataframe df. 
@@ -89,31 +95,18 @@ if __name__ == "__main__":
     # concurrent.futures is that using dask we can engage as many nodes as we 
     # want to distribute the work.
     
-    # tic = time.perf_counter() # start the timer
     with Stopwatch("Creating futures took:", file=filename):
         futures = []
         for column_name in df.columns:
             future = client.submit(costly_simulation, df[column_name], column_name, random.random())
             futures.append(future)
-    # toc = time.perf_counter() # stop the timer and report 
-    # with open(filename, mode='a') as f:
-    #     print(f"Creating futures took: {toc-tic} s",file=f)
-    
-    # tic = time.perf_counter()
-    with Stopwatch("Creating futures took:", file=filename):
-        use_client_gather = True
-        if use_client_gather:
-            results = client.gather(futures)
-        else:
-            results = []
-            for future in futures:
-                result = future.result()
-                with open(filename, mode='a') as f:
-                    print(f"future.{result=}", file=f)
-                results.append(result)
 
-    # toc = time.perf_counter()
-    with open(filename, mode='a') as f:
-        # print(f"Retrieving results took: {toc-tic} s", file=f)
-        result = sum(results)
-        print(f"sum {result=}", file=f)
+    with Stopwatch("Retrieving column results took:", file=filename):
+        results = client.gather(futures)
+        lines = []
+        for r in range(len(results)):
+            lines.append(f"Partial sum {df.columns[r]:<10} = {results[r]:8.3f}")
+        lines.append(    f"Total   sum            = {sum(results):8.3f}")
+        lines = "\n".join(lines)
+        with open(filename, mode='a') as f:
+            print(lines, file=f)
