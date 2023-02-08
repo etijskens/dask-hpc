@@ -2,7 +2,8 @@
 
 Dask futures are used to distribute a problem into tasks (e.g. the replicas) and subtasks (e.g. the species loop in a replica).
 On the cluster we use dask-mpi which autmatically sets up a scheduler on rank 0, the client script on rank 1, and a number of 
-workers on the remaining ranks.
+workers on the remaining ranks. A major advantage of dask-mpi is that you can request as many nodes to distribute the work. If
+memory is an issue, you can even request a numer of nodes, but not use all cores on a node. 
 
 ## The toy problem
 
