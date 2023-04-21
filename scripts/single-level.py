@@ -1,17 +1,34 @@
-# Initialize dask_mpi
-from dask_mpi import initialize
-initialize(interface='ib0', dashboard=False)
+import os
+from math import isclose
+import time
 
-# Create a Client object
-from distributed import Client
-client = Client()
+from mpi4py import MPI
+
+try:
+    on_vsc = os.environ['VSC_INSTITUTE_CLUSTER'] != 'local'
+except KeyError:
+    on_vsc = False
+print(f'{on_vsc=}')
+mpi_comm = MPI.COMM_WORLD
+mpi_rank = mpi_comm.Get_rank()
+mpi_size = mpi_comm.Get_size()
+
+if mpi_size > 1:
+    # Initialize dask_mpi
+    from dask_mpi import initialize
+    interface = 'ib0' if on_vsc else None
+    if not interface:
+        initialize(dashboard=False)
+    else:
+        initialize(interface=interface, dashboard=False)
+
+    # Create a Client object
+    from distributed import Client
+    client = Client()
 
 import pandas as pd
 import numpy as np
-from math import isclose
 
-import time
-import random
 
 print(f'@   rank 1 starting client script')
 #   There is a lot of output from dask to stdout. To distinghuish we let every line
@@ -47,7 +64,7 @@ def task(series: pd.Series, column_name: str) -> float:
     """
     # pretend the task takes some time
     print(f"@@  starting task '{column_name}' ...")
-    time.sleep(random.random())
+    time.sleep(np.random.uniform())
     result = sum(series)
     print(f"@@  Returning sum of '{column_name}' = ({result:8.3f})")
     return result
@@ -72,3 +89,4 @@ if __name__ == "__main__":
     lines.append(    f"@     Total sum            = {sum(results):8.3f}")
     lines = "\n".join(lines)
     print(lines)
+    print('-*# finished #*-')
