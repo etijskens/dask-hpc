@@ -8,7 +8,7 @@ try:
     on_vsc = os.environ['VSC_INSTITUTE_CLUSTER'] != 'local'
 except KeyError:
     on_vsc = False
-print(f'{on_vsc=}')
+print(f'{MPI.COMM_WORLD.Get_rank()} {on_vsc=}')
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
@@ -23,12 +23,14 @@ if mpi_size > 1:
         initialize(interface=interface, dashboard=False)
 
     # Create a Client object
-    from distributed import Client
-    client = Client()
+    if mpi_rank == 0:
+        from distributed import Client
+        client = Client()
 
 import pandas as pd
 import numpy as np
 
+from static_vars import static_vars
 
 print(f'@   rank 1 starting client script')
 #   There is a lot of output from dask to stdout. To distinghuish we let every line
@@ -55,38 +57,52 @@ def create_dataframe(*, n_rows: int, n_columns:int) -> pd.DataFrame:
     
     return pd.DataFrame(a, columns=column_names)
 
-
+@static_vars(prng=None)
 def task(series: pd.Series, column_name: str) -> float:
     """Compute the sum of the dataframe column <series>.
     
     :param series: a dataframe column (numeric)
     :param column_name: name of the column in the dataframe, to produce a intelligible message in the output. 
     """
-    # pretend the task takes some time
+    if task.prng is None:
+        print(f'rank={MPI.COMM_WORLD.Get_rank()} initializing task.prng')
+        task.prng = np.random.RandomState()
     print(f"@@  starting task '{column_name}' ...")
-    time.sleep(np.random.uniform())
+    # pretend the task takes some time
+    sleep = 10*task.prng.uniform()
+    time.sleep(sleep)
     result = sum(series)
-    print(f"@@  Returning sum of '{column_name}' = ({result:8.3f})")
+    print(f"@@  Returning sum of '{column_name}' = ({result:8.3f}), {sleep=}s, rank={MPI.COMM_WORLD.Get_rank()}")
     return result
 
 
 if __name__ == "__main__":
     df = create_dataframe(n_columns=10, n_rows=50) 
 
-    ### Distribute the work ###  
-    
-    futures = []
-    for column_name in df.columns:
-        print(f"@   creating future for task '{column_name}' ...")
-        future = client.submit(task, df[column_name], column_name)
-        futures.append(future)
+    tic = time.perf_counter()
+    if mpi_size == 1:
+        print(f'@   Serial execution.')
+        for column_name in df.columns:
+            task(df[column_name], column_name)
+    else:
+        ### Distribute the work ###
+        print(f'@   Parallel execution using {mpi_size-1} dask workers.')
 
-    print("@   Retrieving task results ...")
-    results = client.gather(futures)
-    lines = []
-    for r in range(len(results)):
-        lines.append(f"@   Partial sum {df.columns[r]:<10} = {results[r]:8.3f}")
-    lines.append(    f"@     Total sum            = {sum(results):8.3f}")
-    lines = "\n".join(lines)
-    print(lines)
+        futures = []
+        for column_name in df.columns:
+            print(f"@   creating future for task '{column_name}' ...")
+            future = client.submit(task, df[column_name], column_name)
+            futures.append(future)
+
+        print("@   Retrieving task results ...")
+        results = client.gather(futures)
+        lines = []
+        for r in range(len(results)):
+            lines.append(f"@   Partial sum {df.columns[r]:<10} = {results[r]:8.3f}")
+        lines.append(    f"@     Total sum            = {sum(results):8.3f}")
+        lines = "\n".join(lines)
+        print(lines)
+
+    toc = time.perf_counter()
+    print(f"wall time = {toc - tic:5.2f}s")
     print('-*# finished #*-')
